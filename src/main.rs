@@ -1,9 +1,9 @@
-use crate::models::{formated_error, get_writer, to_csv, Options};
+use crate::models::{formated_error, get_reader, get_writer, to_csv, Options};
 use clap::{crate_authors, crate_version, App, Arg};
 use serde_json::json;
 use std::{
-    fs::File,
-    io::{self, BufWriter, Write},
+    io::{self, BufReader, BufWriter, Read, Write},
+    option::Option::Some,
 };
 
 mod models;
@@ -19,12 +19,6 @@ fn main() {
             .max_values(3)
             .takes_value(false)
             .help("Sets level of debug output")
-        )
-        .arg(Arg::with_name("stdin")
-            .short("x")
-            .long("stdin")
-            .takes_value(false)
-            .help("Turns on stdin reading")
         )
         .arg(
             Arg::with_name("separator")
@@ -61,7 +55,7 @@ fn main() {
 
     let show_type = matches.is_present("type");
     let separator = match matches.value_of("separator") {
-        Some("c") => ", ",
+        Some("c") => ",",
         Some("t") => "\t",
         _ => panic!("Separator missing"),
     };
@@ -94,8 +88,9 @@ fn main() {
     // Processes any files in the order they were inputted to the CLI, skipping on a failed open
     if let Some(files) = matches.values_of("input") {
         let file_list: Vec<_> = files.collect();
+        if file_list.len();
         for file in file_list {
-            let input = File::open(file);
+            let input = get_reader(Some(file));
             if input.is_ok() {
                 let status = match to_csv(&options, input.unwrap(), writer.by_ref()) {
                     Ok(res) => res,

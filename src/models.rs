@@ -37,6 +37,18 @@ pub fn get_writer(w: Option<&str>, options: &Options) -> Box<Write> {
     }
 }
 
+// Opens a read stream to either stdin or a file, depending on the user
+// If it can't open a file it will die
+pub fn get_reader(r: Option<&str>) -> Result<Box<Read>, String> {
+    match r {
+        Some(file_name) => match File::open(file_name).ok() {
+            Some(file) => Ok(Box::new(file)),
+            None => Err(format!("Can't open file: {}", &file_name)),
+        },
+        None => Ok(Box::new(std::io::stdin())),
+    }
+}
+
 // Puts all the pieces together
 pub fn to_csv<R: Read, W: Write>(
     options: &Options,
