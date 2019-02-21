@@ -87,10 +87,25 @@ fn main() {
 
     // Processes any files in the order they were inputted to the CLI, skipping on a failed open
     if let Some(files) = matches.values_of("input") {
-        let file_list: Vec<_> = files.collect();
-        if file_list.len();
+        let file_list: Vec<Option<&String>> = files
+            .map(|file_name| match file_name {
+                "-" => None,
+                s => Some(&s.to_string()),
+            })
+            .collect();
+        if file_list
+            .iter()
+            .filter(|file_name| file_name.is_none())
+            .count()
+            > 1
+        {
+            panic!("The STDIO option '-' can only be used once.")
+        }
+        if file_list.len() < 1 {
+            file_list.push(None)
+        };
         for file in file_list {
-            let input = get_reader(Some(file));
+            let input = get_reader(file);
             if input.is_ok() {
                 let status = match to_csv(&options, input.unwrap(), writer.by_ref()) {
                     Ok(res) => res,
