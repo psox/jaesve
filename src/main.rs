@@ -33,7 +33,12 @@ fn main() {
         .arg(Arg::with_name("line")
             .short("l")
             .long("line")
+            .takes_value(true)
+            .min_values(0)
             .help("Set stdin to read a JSON string from each line")
+            .long_help("Read a whole JSON document from each line \
+                and optionally prepend a line number field \
+                starting with <line> number" )
         )
         .arg(Arg::with_name("regex")
             .short("x")
@@ -68,27 +73,34 @@ fn main() {
                 .takes_value(true)
                 .help("Specify an output file path, defaults to stdout")
         )
+        .arg(
+            Arg::with_name("prefix")
+            .short("p")
+            .long("prefix")
+            .value_name("PREFIX")
+            .takes_value(true)
+            .help("Add a column at the front with the provided string.")
+        )
         .get_matches();
 
     if matches.is_present("type") && matches.is_present("regex_column") {
-        match matches.value_of("regex_column") {
-            Some("type") => panic!("Error: Cannot regex on column 'type' it is disabled"),
-            _ => ()
+        if let Some("type") = matches.value_of("regex_column") {
+            panic!("Error: Cannot regex on column 'type' it is disabled")
         }
     }
 
     let regex_opts = {
         let regex = match matches.value_of("regex") {
-        Some(r) => Some(Regex::new(r).unwrap()),
-        None => None,
-    };
+            Some(r) => Some(Regex::new(r).unwrap()),
+            None => None,
+        };
         let column = match matches.value_of("regex_column") {
             Some("key") => Some(RegexOn::Entry),
             Some("type") => Some(RegexOn::Type),
             Some("sep") => Some(RegexOn::Separator),
             Some("value") => Some(RegexOn::Value),
             None => None,
-            Some(_) => panic!("Error: column value is not one of the allowed values")
+            Some(_) => panic!("Error: column value is not one of the allowed values"),
         };
 
         (regex, column)
@@ -111,7 +123,13 @@ fn main() {
     };
 
     // Place CLI options into a central location
-    let options = Options::new(show_type, separator.to_owned(), debug_level, by_line, regex_opts);
+    let options = Options::new(
+        show_type,
+        separator.to_owned(),
+        debug_level,
+        by_line,
+        regex_opts,
+    );
 
     // Set up the writer: either to stdout or a file
     let mut writer = BufWriter::new(get_writer(matches.value_of("output"), &options));

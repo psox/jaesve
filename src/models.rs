@@ -9,7 +9,7 @@ use serde_json::{
 use std::{
     collections::VecDeque,
     fs::File,
-    io::{BufRead, Read, Write},
+    io::{BufRead, Write},
     result,
 };
 
@@ -129,19 +129,17 @@ fn write<W: Write>(options: &Options, mut output: W, entry: &str, val: Option<&J
             let column = match regex_opts.get_column() {
                 Some(RegexOn::Entry) => entry,
                 Some(RegexOn::Value) => value.as_str(),
-                Some(RegexOn::Type) => {
-                    match val {
-                        Some(val) => match val {
-                            jObject(_) => "Map",
-                            jArray(_) => "Array",
-                            jString(_) => "String",
-                            jNumber(_) => "Number",
-                            jBool(_) => "Bool",
-                            jNull => "Null",
-                        },
-                        None => "NO_TYPE",
-                    }
-                }
+                Some(RegexOn::Type) => match val {
+                    Some(val) => match val {
+                        jObject(_) => "Map",
+                        jArray(_) => "Array",
+                        jString(_) => "String",
+                        jNumber(_) => "Number",
+                        jBool(_) => "Bool",
+                        jNull => "Null",
+                    },
+                    None => "NO_TYPE",
+                },
                 Some(RegexOn::Separator) => separator,
                 None => panic!("Error: Need a column to regex match on"),
             };
