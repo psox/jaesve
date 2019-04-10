@@ -1,11 +1,13 @@
 [package]
 name = "jaesve"
-version = "0.8.1"
+version = "0.9.1"
 authors = ["Baz <github(a)luxolus.com>"]
 edition = "2018"
+description = "Utility for converting JSON into a CSV-like format"
 
 [dependencies]
-serde_json = "1.0.34"
-failure = "0.1.4"
-clap = "2.32.0"
+serde_json = "1.0.39"
+failure = "0.1.5"
+clap = "2.33.0"
+structopt = "0.2.15"
 regex = "1"

@@ -1,34 +1,21 @@
-use crate::models::{formated_error, get_reader, get_writer, to_csv, Options, ReadFrom, RegexOn};
-use clap::{crate_authors, crate_version, App, Arg};
-use regex::Regex;
-use serde_json::json;
-use std::io::{self, BufWriter, Write};
+use {
+    crate::models::{formated_error, get_reader, get_writer, to_csv, Options, ReadFrom, RegexOn},
+    clap::{App, Arg},
+    regex::Regex,
+    serde_json::json,
+    std::io::{self, BufWriter, Write},
+};
 
 mod models;
 
 fn main() {
     let matches = App::new("jaesve")
-        .about("Utility for converting JSON into a CSV-like format")
-        .author(crate_authors!("\n"))
-        .version(crate_version!())
-        .arg(Arg::with_name("verbosity")
-            .short("v")
-            .multiple(true)
-            .max_values(3)
-            .takes_value(false)
-            .help("Sets level of debug output")
-        )
         .arg(
             Arg::with_name("separator")
                 .short("s")
                 .takes_value(true)
                 .default_value("c")
                 .help("c => ',' cs => ', ' t => tab, _ => _"),
-        )
-        .arg(Arg::with_name("type")
-            .short("t")
-            .long("type")
-            .help("Print without json object type")
         )
         .arg(Arg::with_name("line")
             .short("l")
@@ -82,7 +69,7 @@ fn main() {
             .help("Add a column at the front with the provided string.")
         )
         .get_matches();
-
+    dbg!(&matches);
     if matches.is_present("type") && matches.is_present("regex_column") {
         if let Some("type") = matches.value_of("regex_column") {
             panic!("Error: Cannot regex on column 'type' it is disabled")
@@ -121,13 +108,14 @@ fn main() {
         3 => 3,
         _ => 3,
     };
+    let line_number = matches.values_of_lossy("line");
 
     // Place CLI options into a central location
     let options = Options::new(
         show_type,
         separator.to_owned(),
         debug_level,
-        by_line,
+        line_number,
         regex_opts,
     );
 

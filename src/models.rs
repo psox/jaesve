@@ -1,17 +1,47 @@
-use failure::Error as fError;
-use serde_json::{
-    json, Value as JsonValue,
-    Value::{
-        Array as jArray, Bool as jBool, Null as jNull, Number as jNumber, Object as jObject,
-        String as jString,
+use {
+    failure::Error as fError,
+    serde_json::{
+        json, Value as JsonValue,
+        Value::{
+            Array as jArray, Bool as jBool, Null as jNull, Number as jNumber, Object as jObject,
+            String as jString,
+        },
     },
+    std::{
+        collections::VecDeque,
+        fs::File,
+        io::{BufRead, Write},
+        result,
+    },
+    structopt::StructOpt,
 };
-use std::{
-    collections::VecDeque,
-    fs::File,
-    io::{BufRead, Write},
-    result,
-};
+
+#[derive(StructOpt, Debug)]
+#[structopt(rename_all = "kebab_cace")]
+pub struct Options {
+    #[structopt(
+        default_value = false,
+    )]
+        /// Print without json object type
+    hide_type: bool,
+    #[structopt(
+        short = "v",
+        long = "verbose",
+        parse(from_occurrences),
+        max_values = 3,
+        default_value = 0,
+    )]
+        /// Sets level of debug output
+    debug_level: u8,
+    #[structopt(default_value = ",")]
+    /// The field separator to use
+    separator: String,
+    /// Enable multi document processing and add an index
+    /// column to the front of the output starting at the
+    /// line provided
+    line_number: Option<i64>,
+    regex: RegexOptions,
+}
 
 type FailureResult<T> = result::Result<T, fError>;
 
@@ -116,12 +146,12 @@ fn write<W: Write>(options: &Options, mut output: W, entry: &str, val: Option<&J
             None => "NO_TYPE",
         };
         let fmt = format!(
-            "\"{}\"{}\"{}\"{}\"{}\"",
+            r##""{}"{}"{}"{}"{}""##,
             entry, separator, type_of, separator, value
         );
         formated_output.push_str(&fmt);
     } else {
-        let fmt = format!("\"{}\"{}\"{}\"", entry, separator, value);
+        let fmt = format!(r##""{}"{}"{}""##, entry, separator, value);
         formated_output.push_str(&fmt);
     }
     match regex_opts.get_regex() {
@@ -201,20 +231,20 @@ impl RegexOptions {
 
 // Struct for holding the options that affect program logic
 // Only passes out references
-pub struct Options {
-    show_type: bool,
-    separator: String,
-    debug_level: i32,
-    by_line: bool,
-    regex: RegexOptions,
-}
+// pub struct Options {
+//     show_type: bool,
+//     separator: String,
+//     debug_level: i32,
+//     by_line: Option<i64>,
+//     regex: RegexOptions,
+// }
 
 impl Options {
     pub fn new(
         show_type: bool,
         separator: String,
         debug_level: i32,
-        by_line: bool,
+        by_line: Option<i64>,
         regex_opts: (Option<regex::Regex>, Option<RegexOn>),
     ) -> Self {
         let regex = RegexOptions::new(regex_opts.0, regex_opts.1);
@@ -236,7 +266,7 @@ impl Options {
         &self.show_type
     }
 
-    pub fn single_line_object(&self) -> &bool {
+    pub fn single_line_object(&self) -> &Option<i64> {
         &self.by_line
     }
 
