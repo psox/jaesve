@@ -1,4 +1,5 @@
 use {
+    clap::arg_enum,
     failure::Error as fError,
     serde_json::{
         json, Value as JsonValue,
@@ -16,31 +17,71 @@ use {
     structopt::StructOpt,
 };
 
+arg_enum! {
+    #[derive(Debug)]
+    pub enum ColumnNames {
+        Path,
+        Type,
+        Value,
+        Index
+    }
+}
+
 #[derive(StructOpt, Debug)]
-#[structopt(rename_all = "kebab_cace")]
+#[structopt(rename_all = "kebab_case")]
 pub struct Options {
-    #[structopt(
-        default_value = false,
-    )]
-        /// Print without json object type
+    #[structopt(short = "t", long)]
+    /// Print without json object type
     hide_type: bool,
+    #[structopt(short, long)]
+    /// Print a header row
+    print_header: bool,
     #[structopt(
-        short = "v",
-        long = "verbose",
-        parse(from_occurrences),
-        max_values = 3,
-        default_value = 0,
+        short,
+        long,
+        raw(possible_values = r##"&vec!["0","1","2","3"]"##),
+        default_value = "0"
     )]
-        /// Sets level of debug output
-    debug_level: u8,
-    #[structopt(default_value = ",")]
+    /// Sets level of debug output
+    verbose: u8,
+    #[structopt(short, long, default_value = ", ")]
     /// The field separator to use
+    /// \t => tab
     separator: String,
+    #[structopt(short, long, default_value = "\"")]
+    /// Beginning delimiter for the fields
+    left_delimiter: String,
+    #[structopt(short, long, default_value = "\"")]
+    /// End delimiter for the fields
+    right_delimiter: String,
+    #[structopt(short, long, default_value = "\n")]
+    /// End delimiter for the fields
+    end_of_record: String,
+    #[structopt(short, long)]
     /// Enable multi document processing and add an index
     /// column to the front of the output starting at the
     /// line provided
-    line_number: Option<i64>,
-    regex: RegexOptions,
+    multi_documents: Option<i64>,
+    #[structopt(short = "x", long)]
+    /// Search regular expression
+    regex: Option<String>,
+    #[structopt(
+        short,
+        long,
+        raw(
+            possible_values = "&ColumnNames::variants()",
+            case_insensitive = "true"
+        ),
+        default_value = "Value"
+    )]
+    /// Column for regex to apply to
+    column: ColumnNames,
+    #[structopt(short, long, default_value = "-")]
+    /// List of input file names where '-' => <STDIN>
+    input: Vec<String>,
+    #[structopt(short, long, default_value = "-")]
+    /// List of output file where '-' => <STDOUT>
+    output: String,
 }
 
 type FailureResult<T> = result::Result<T, fError>;
@@ -49,12 +90,11 @@ type FailureResult<T> = result::Result<T, fError>;
 // If it can't open a file it will attempt to create it
 // If it can't create it, will default to stdout
 pub fn get_writer(w: Option<&str>, options: &Options) -> Box<Write> {
-    let debug_level = options.get_debug_level();
     match w {
         Some(file_name) => match File::create(file_name).ok() {
             Some(file) => Box::new(file),
             None => {
-                if *debug_level >= 1 {
+                if options.verbose >= 1 {
                     eprintln!(
                         "Error! Failed to create: {}, switching to stdout...",
                         &file_name
@@ -92,7 +132,7 @@ pub fn to_csv<W: Write>(
             packet.print(options, &mut output);
         }
         ReadFrom::Stdin(s) => {
-            if *options.single_line_object() {
+            if options.multi_documents.is_some() {
                 s.lock()
                     .lines()
                     .filter_map(|r| r.ok())
@@ -119,9 +159,9 @@ pub fn to_csv<W: Write>(
 // The work-horse of the rebel fleet
 // If something goes wrong, writes the error to stderr and moves on
 fn write<W: Write>(options: &Options, mut output: W, entry: &str, val: Option<&JsonValue>) {
-    let regex_opts = options.get_regex_opts();
-    let separator = options.get_separator();
-    let show_type = options.type_status();
+    let regex_opts = &options.regex;
+    let separator = &options.separator;
+    let show_type = !options.hide_type;
     let value = match val {
         Some(jObject(_)) => "".to_string(),
         Some(jArray(_)) => "".to_string(),
@@ -133,7 +173,7 @@ fn write<W: Write>(options: &Options, mut output: W, entry: &str, val: Option<&J
     };
     let mut formated_output = String::new();
 
-    if *show_type {
+    if show_type {
         let type_of = match val {
             Some(val) => match val {
                 jObject(_) => "Map",
@@ -154,36 +194,36 @@ fn write<W: Write>(options: &Options, mut output: W, entry: &str, val: Option<&J
         let fmt = format!(r##""{}"{}"{}""##, entry, separator, value);
         formated_output.push_str(&fmt);
     }
-    match regex_opts.get_regex() {
-        Some(r) => {
-            let column = match regex_opts.get_column() {
-                Some(RegexOn::Entry) => entry,
-                Some(RegexOn::Value) => value.as_str(),
-                Some(RegexOn::Type) => match val {
-                    Some(val) => match val {
-                        jObject(_) => "Map",
-                        jArray(_) => "Array",
-                        jString(_) => "String",
-                        jNumber(_) => "Number",
-                        jBool(_) => "Bool",
-                        jNull => "Null",
-                    },
-                    None => "NO_TYPE",
-                },
-                Some(RegexOn::Separator) => separator,
-                None => panic!("Error: Need a column to regex match on"),
-            };
+    // match regex_opts.get_regex() {
+    //     Some(r) => {
+    //         let column = match regex_opts.get_column() {
+    //             Some(RegexOn::Entry) => entry,
+    //             Some(RegexOn::Value) => value.as_str(),
+    //             Some(RegexOn::Type) => match val {
+    //                 Some(val) => match val {
+    //                     jObject(_) => "Map",
+    //                     jArray(_) => "Array",
+    //                     jString(_) => "String",
+    //                     jNumber(_) => "Number",
+    //                     jBool(_) => "Bool",
+    //                     jNull => "Null",
+    //                 },
+    //                 None => "NO_TYPE",
+    //             },
+    //             Some(RegexOn::Separator) => separator,
+    //             None => panic!("Error: Need a column to regex match on"),
+    //         };
 
-            if r.is_match(column) {
-                writeln!(output.by_ref(), "{}", formated_output.as_str())
-                    .map_err(|e| eprintln!("An error occurred while writing: {}", e))
-                    .unwrap_or(())
-            }
-        }
-        None => writeln!(output.by_ref(), "{}", formated_output.as_str())
-            .map_err(|e| eprintln!("An error occurred while writing: {}", e))
-            .unwrap_or(()),
-    }
+    //     if r.is_match(column) {
+    //         writeln!(output.by_ref(), "{}", formated_output.as_str())
+    //             .map_err(|e| eprintln!("An error occurred while writing: {}", e))
+    //             .unwrap_or(())
+    //     }
+    // }
+    // None => writeln!(output.by_ref(), "{}", formated_output.as_str())
+    //     .map_err(|e| eprintln!("An error occurred while writing: {}", e))
+    //     .unwrap_or(()),
+    // }
 }
 
 // Small function for formatting any error (chains) failureResult catches
@@ -226,56 +266,6 @@ impl RegexOptions {
 
     pub fn get_column(&self) -> &Option<RegexOn> {
         &self.column
-    }
-}
-
-// Struct for holding the options that affect program logic
-// Only passes out references
-// pub struct Options {
-//     show_type: bool,
-//     separator: String,
-//     debug_level: i32,
-//     by_line: Option<i64>,
-//     regex: RegexOptions,
-// }
-
-impl Options {
-    pub fn new(
-        show_type: bool,
-        separator: String,
-        debug_level: i32,
-        by_line: Option<i64>,
-        regex_opts: (Option<regex::Regex>, Option<RegexOn>),
-    ) -> Self {
-        let regex = RegexOptions::new(regex_opts.0, regex_opts.1);
-
-        Options {
-            show_type,
-            separator,
-            debug_level,
-            by_line,
-            regex,
-        }
-    }
-
-    pub fn get_separator(&self) -> &str {
-        &self.separator
-    }
-
-    pub fn type_status(&self) -> &bool {
-        &self.show_type
-    }
-
-    pub fn single_line_object(&self) -> &Option<i64> {
-        &self.by_line
-    }
-
-    pub fn get_debug_level(&self) -> &i32 {
-        &self.debug_level
-    }
-
-    pub fn get_regex_opts(&self) -> &RegexOptions {
-        &self.regex
     }
 }
 
