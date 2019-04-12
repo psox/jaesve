@@ -39,7 +39,7 @@ pub struct Options {
     #[structopt(
         short,
         long,
-        raw(possible_values = r##"&vec!["0","1","2","3"]"##),
+        raw(possible_values = r##"&["0","1","2","3"]"##),
         default_value = "0"
     )]
     /// Sets level of debug output
@@ -55,16 +55,19 @@ pub struct Options {
     /// End delimiter for the fields
     right_delimiter: String,
     #[structopt(short, long, default_value = "\n")]
-    /// End delimiter for the fields
+    /// End delimiter for the record
     end_of_record: String,
+    #[structopt(short, long, default_value = "")]
+    /// Start delimiter for the record
+    beginning_of_record: String,
     #[structopt(short, long)]
     /// Enable multi document processing and add an index
     /// column to the front of the output starting at the
     /// line provided
     multi_documents: Option<i64>,
-    #[structopt(short = "x", long)]
+    #[structopt(short = "x", long, default_value = ".*")]
     /// Search regular expression
-    regex: Option<String>,
+    regex: String,
     #[structopt(
         short,
         long,
@@ -78,10 +81,10 @@ pub struct Options {
     column: ColumnNames,
     #[structopt(short, long, default_value = "-")]
     /// List of input file names where '-' => <STDIN>
-    input: Vec<String>,
+    pub input: Vec<String>,
     #[structopt(short, long, default_value = "-")]
     /// List of output file where '-' => <STDOUT>
-    output: String,
+    pub output: String,
 }
 
 type FailureResult<T> = result::Result<T, fError>;
@@ -89,33 +92,23 @@ type FailureResult<T> = result::Result<T, fError>;
 // Opens a write stream to either stdout or a file, depending on the user
 // If it can't open a file it will attempt to create it
 // If it can't create it, will default to stdout
-pub fn get_writer(w: Option<&str>, options: &Options) -> Box<Write> {
-    match w {
-        Some(file_name) => match File::create(file_name).ok() {
-            Some(file) => Box::new(file),
-            None => {
-                if options.verbose >= 1 {
-                    eprintln!(
-                        "Error! Failed to create: {}, switching to stdout...",
-                        &file_name
-                    )
-                }
-                Box::new(std::io::stdout())
-            }
-        },
-        None => Box::new(std::io::stdout()),
+pub fn get_writer(file_name: &str) -> Box<Write> {
+    if file_name == "-" {
+        Box::new(std::io::stdout())
+    } else {
+        Box::new(File::create(file_name).unwrap())
     }
 }
 
 // Either opens from a file or stdin if the "filename" is "-"
-pub fn get_reader(r: Option<&str>) -> Result<ReadFrom, String> {
-    match r {
-        Some("-") => Ok(ReadFrom::Stdin(std::io::stdin())),
-        Some(file_name) => match File::open(file_name).ok() {
-            Some(file) => Ok(ReadFrom::File(file)),
-            None => Err(format!("Can't open file: {}", &file_name)),
-        },
-        None => Ok(ReadFrom::Stdin(std::io::stdin())),
+pub fn get_reader(file_name: &str) -> Result<ReadFrom, String> {
+    if file_name == "-" {
+        Ok(ReadFrom::Stdin(std::io::stdin()))
+    } else {
+        match File::open(file_name) {
+            Ok(file) => Ok(ReadFrom::File(file)),
+            Err(error) => Err(error.to_string()),
+        }
     }
 }
 
@@ -135,7 +128,7 @@ pub fn to_csv<W: Write>(
             if options.multi_documents.is_some() {
                 s.lock()
                     .lines()
-                    .filter_map(|r| r.ok())
+                    .filter_map(std::result::Result::ok)
                     .filter_map(|line| {
                         let data = serde_json::from_str(line.as_str());
                         data.ok()
@@ -159,7 +152,7 @@ pub fn to_csv<W: Write>(
 // The work-horse of the rebel fleet
 // If something goes wrong, writes the error to stderr and moves on
 fn write<W: Write>(options: &Options, mut output: W, entry: &str, val: Option<&JsonValue>) {
-    let regex_opts = &options.regex;
+    let regex = &options.regex;
     let separator = &options.separator;
     let show_type = !options.hide_type;
     let value = match val {
@@ -241,32 +234,6 @@ pub fn formated_error(err: &::failure::Error) -> String {
 pub enum ReadFrom {
     File(std::fs::File),
     Stdin(std::io::Stdin),
-}
-
-pub enum RegexOn {
-    Entry,
-    Value,
-    Type,
-    Separator,
-}
-
-pub struct RegexOptions {
-    regex: Option<regex::Regex>,
-    column: Option<RegexOn>,
-}
-
-impl RegexOptions {
-    pub fn new(regex: Option<regex::Regex>, column: Option<RegexOn>) -> Self {
-        RegexOptions { regex, column }
-    }
-
-    pub fn get_regex(&self) -> &Option<regex::Regex> {
-        &self.regex
-    }
-
-    pub fn get_column(&self) -> &Option<RegexOn> {
-        &self.column
-    }
 }
 
 // Struct for creating and holding a list of json pointers
