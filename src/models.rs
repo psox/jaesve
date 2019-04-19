@@ -32,10 +32,10 @@ arg_enum! {
 pub struct Options {
     #[structopt(short = "t", long)]
     /// Print without json object type
-    hide_type: bool,
+    pub hide_type: bool,
     #[structopt(short, long)]
     /// Print a header row
-    print_header: bool,
+    pub print_header: bool,
     #[structopt(
         short,
         long,
@@ -43,31 +43,31 @@ pub struct Options {
         default_value = "0"
     )]
     /// Sets level of debug output
-    verbose: u8,
+    pub verbose: u8,
     #[structopt(short, long, default_value = ", ")]
     /// The field separator to use
     /// \t => tab
-    separator: String,
+    pub separator: String,
     #[structopt(short, long, default_value = "\"")]
     /// Beginning delimiter for the fields
-    left_delimiter: String,
+    pub left_delimiter: String,
     #[structopt(short, long, default_value = "\"")]
     /// End delimiter for the fields
-    right_delimiter: String,
+    pub right_delimiter: String,
     #[structopt(short, long, default_value = "\n")]
     /// End delimiter for the record
-    end_of_record: String,
+    pub end_of_record: String,
     #[structopt(short, long, default_value = "")]
     /// Start delimiter for the record
-    beginning_of_record: String,
+    pub beginning_of_record: String,
     #[structopt(short, long)]
     /// Enable multi document processing and add an index
     /// column to the front of the output starting at the
     /// line provided
-    multi_documents: Option<i64>,
+    pub multi_documents: Option<i64>,
     #[structopt(short = "x", long, default_value = ".*")]
     /// Search regular expression
-    regex: String,
+    pub regex: String,
     #[structopt(
         short,
         long,
@@ -78,7 +78,7 @@ pub struct Options {
         default_value = "Value"
     )]
     /// Column for regex to apply to
-    column: ColumnNames,
+    pub column: ColumnNames,
     #[structopt(short, long, default_value = "-")]
     /// List of input file names where '-' => <STDIN>
     pub input: Vec<String>,

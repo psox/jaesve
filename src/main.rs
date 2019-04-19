@@ -8,7 +8,9 @@ mod models;
 
 fn main() {
     let app_options = AppOptions::from_args();
-    dbg!(&app_options);
+    if (app_options.verbose & 2) != 0 {
+        dbg!(&app_options);
+    }
 
     // Set up the writer: either to stdout or a file
     let mut writer = BufWriter::new(get_writer(&app_options.output));
