@@ -3,12 +3,15 @@ use {
         cli::ProgramArgs,
         match_with_log,
         models::{
-            assets::{Field, IdentifyFirstLast, ReadFrom, ReadKind, RegexOptions},
+            assets::{IdentifyFirstLast, ReadFrom, ReadKind, RegexOptions},
+            block::Identifier,
             builder::{Builder, Output},
             error::{ErrorKind, Result},
+            field::Field,
             pointer::{Pointer, PointerKind},
             scan::JsonScan,
         },
+        CLI,
     },
     simplelog::*,
     std::{
@@ -21,13 +24,15 @@ use {
 };
 
 pub mod assets;
+pub mod block;
 pub mod builder;
 pub mod error;
+pub mod field;
 pub mod pointer;
 pub mod scan;
 
 /// Type def for the reader -> builder channel
-pub type ToBuilder = (usize, PointerKind, Vec<u8>);
+pub type ToBuilder = (Option<Identifier>, Option<PointerKind>, Option<Vec<u8>>);
 /// Type def for the builder -> writer channel
 pub type ToWriter = Output;
 
@@ -108,7 +113,13 @@ pub fn initialize_logging(opts: &ProgramArgs) {
     let mut skipped: Vec<String> = Vec::new();
     match opts.logger() {
         Some(set) if set.contains("-") && set.len() == 1 => {
-            TermLogger::init(opts.debug_level(), Config::default(), TerminalMode::Stderr).unwrap()
+            TermLogger::init(opts.debug_level(), Config::default(), TerminalMode::Stderr)
+                .unwrap_or_else(|_| {
+                    skipped.push(format!(
+                        "No TERM variable found, defaulting to fallback logger"
+                    ));
+                    SimpleLogger::init(opts.debug_level(), Config::default()).unwrap()
+                })
         }
         Some(set) => CombinedLogger::init(
             set.iter()
@@ -118,9 +129,14 @@ pub fn initialize_logging(opts: &ProgramArgs) {
                         .append(true)
                         .create(true)
                         .open(path)
-                        .map_err(|e| skipped.push(format!("'{}' reason: {}", path, e)))
+                        .map_err(|e| {
+                            skipped.push(format!(
+                                "Failed to open '{}' reason: {}... ignoring",
+                                path, e
+                            ))
+                        })
                         .ok()
-                        .map(|f| Some(f)),
+                        .map(Some),
                 })
                 .map(|path| -> Box<dyn SharedLogger> {
                     match path {
@@ -135,15 +151,22 @@ pub fn initialize_logging(opts: &ProgramArgs) {
                 })
                 .collect(),
         )
-        .unwrap(),
-        None => {
-            TermLogger::init(opts.debug_level(), Config::default(), TerminalMode::Stderr).unwrap()
-        }
+        .unwrap_or_else(|_| {
+            skipped.push(format!("Failed to start logger(s), using fallback"));
+            SimpleLogger::init(opts.debug_level(), Config::default()).unwrap()
+        }),
+        None => TermLogger::init(opts.debug_level(), Config::default(), TerminalMode::Stderr)
+            .unwrap_or_else(|_| {
+                skipped.push(format!(
+                    "No TERM variable found, defaulting to fallback logger"
+                ));
+                SimpleLogger::init(opts.debug_level(), Config::default()).unwrap()
+            }),
     }
     info!("<---- PROGRAM START ---->");
     if !skipped.is_empty() {
         for failed in skipped {
-            warn!("Failed to open {}... ignoring", failed)
+            warn!("{}", failed)
         }
     }
 }
@@ -152,51 +175,50 @@ pub fn initialize_logging(opts: &ProgramArgs) {
 /// handles both recursive and single item docs
 pub fn unwind_json<I>(
     opts: &ProgramArgs,
-    ident: usize,
-    src: I,
+    ident: Option<usize>,
+    source: Option<I>,
     channel: SyncSender<ToBuilder>,
 ) -> Result<()>
 where
     I: Iterator<Item = ioResult<u8>>,
 {
     debug!("Started parsing a JSON doc");
-    let mut scanner = JsonScan::new(src);
+    let pointer = eval_raw(|opts, _| PointerKind::new(opts), ());
+    let mut maybe_scanner = source.map(JsonScan::new);
+    match maybe_scanner.as_mut() {
+        Some(scanner) => loop {
+            match scanner.next() {
+                Some(Ok(b @ b'[')) => {
+                    unwind_recursive(opts, ident, scanner, pointer.clone(), channel.clone(), b)?;
+                    continue;
+                }
+                Some(Ok(b @ b'{')) => {
+                    unwind_recursive(opts, ident, scanner, pointer.clone(), channel.clone(), b)?;
+                    continue;
+                }
+                Some(Ok(b @ b'-')) | Some(Ok(b @ b'0'..=b'9')) => {
+                    unwind_single(opts, ident, scanner, b, channel.clone())?
+                }
+                Some(Ok(b @ b't')) | Some(Ok(b @ b'f')) => {
+                    unwind_single(opts, ident, scanner, b, channel.clone())?
+                }
+                Some(Ok(b @ b'n')) => unwind_single(opts, ident, scanner, b, channel.clone())?,
+                Some(Ok(b @ b'"')) => unwind_single(opts, ident, scanner, b, channel.clone())?,
+                Some(Ok(_)) => continue,
+                Some(Err(e)) => return Err(e.into()),
+                None => break,
+            }
+        },
+        None => {
+            channel
+                .send((ident.map(|i| i.into()), PointerKind::new(opts), None))
+                .map_err(|_| {
+                    ErrorKind::UnexpectedChannelClose(format!(
+                        "builder in |reader -> builder| channel has hung up"
+                    ))
+                })?;
 
-    loop {
-        match scanner.next() {
-            Some(Ok(b @ b'[')) => {
-                unwind_recursive(
-                    opts,
-                    ident,
-                    &mut scanner,
-                    PointerKind::new(opts),
-                    channel.clone(),
-                    b,
-                )?;
-                continue;
-            }
-            Some(Ok(b @ b'{')) => {
-                unwind_recursive(
-                    opts,
-                    ident,
-                    &mut scanner,
-                    PointerKind::new(opts),
-                    channel.clone(),
-                    b,
-                )?;
-                continue;
-            }
-            Some(Ok(b @ b'-')) | Some(Ok(b @ b'0'..=b'9')) => {
-                unwind_single(opts, ident, &mut scanner, b, channel.clone())?
-            }
-            Some(Ok(b @ b't')) | Some(Ok(b @ b'f')) => {
-                unwind_single(opts, ident, &mut scanner, b, channel.clone())?
-            }
-            Some(Ok(b @ b'n')) => unwind_single(opts, ident, &mut scanner, b, channel.clone())?,
-            Some(Ok(b @ b'"')) => unwind_single(opts, ident, &mut scanner, b, channel.clone())?,
-            Some(Ok(_)) => continue,
-            Some(Err(e)) => return Err(e.into()),
-            None => break,
+            drop(channel);
         }
     }
 
@@ -211,9 +233,9 @@ where
 // how badly this function mangled it
 pub fn unwind_recursive<I>(
     opts: &ProgramArgs,
-    ident: usize,
+    ident: Option<usize>,
     scanner: &mut JsonScan<I>,
-    jptr: PointerKind,
+    jptr: Option<PointerKind>,
     channel: SyncSender<ToBuilder>,
     prefix_byte: u8,
 ) -> Result<()>
@@ -232,10 +254,14 @@ where
                     ident,
                     scanner,
                     match prefix_byte {
-                        b'[' => jptr.clone_extend(array_count),
-                        b'{' => jptr.clone_extend(from_utf8(
-                            calculate_key(&buffer, scanner.offsets()).as_slice(),
-                        )?),
+                        b'[' => jptr.as_ref().map(|ptr| ptr.clone_extend(array_count)),
+                        b'{' => jptr
+                            .as_ref()
+                            .map(|ptr| {
+                                from_utf8(&calculate_key(&buffer, scanner.offsets()))
+                                    .map(|s| ptr.clone_extend(s))
+                            })
+                            .transpose()?,
                         _ => unreachable!(),
                     },
                     channel.clone(),
@@ -251,10 +277,14 @@ where
                     ident,
                     scanner,
                     match prefix_byte {
-                        b'[' => jptr.clone_extend(array_count),
-                        b'{' => jptr.clone_extend(from_utf8(
-                            calculate_key(&buffer, scanner.offsets()).as_slice(),
-                        )?),
+                        b'[' => jptr.as_ref().map(|ptr| ptr.clone_extend(array_count)),
+                        b'{' => jptr
+                            .as_ref()
+                            .map(|ptr| {
+                                from_utf8(&calculate_key(&buffer, scanner.offsets()))
+                                    .map(|s| ptr.clone_extend(s))
+                            })
+                            .transpose()?,
                         _ => unreachable!(),
                     },
                     channel.clone(),
@@ -278,13 +308,13 @@ where
         }
     }
 
-    trace!("AFTER: ({:?}, {:?})", &jptr, from_utf8(&buffer));
-
-    channel.send((ident, jptr, buffer)).map_err(|_| {
-        ErrorKind::UnexpectedChannelClose(format!(
-            "builder in |reader -> builder| channel has hung up"
-        ))
-    })?;
+    channel
+        .send((ident.map(|i| i.into()), jptr, Some(buffer)))
+        .map_err(|_| {
+            ErrorKind::UnexpectedChannelClose(format!(
+                "builder in |reader -> builder| channel has hung up"
+            ))
+        })?;
 
     drop(channel);
     Ok(())
@@ -294,7 +324,7 @@ where
 /// Only called if the doc is not a object or array
 pub fn unwind_single<I>(
     opts: &ProgramArgs,
-    ident: usize,
+    ident: Option<usize>,
     scanner: &mut JsonScan<I>,
     prefix_byte: u8,
     channel: SyncSender<ToBuilder>,
@@ -310,7 +340,11 @@ where
         .collect();
 
     channel
-        .send((ident, PointerKind::new(opts), buffer?))
+        .send((
+            ident.map(|i| i.into()),
+            PointerKind::new(opts),
+            Some(buffer?),
+        ))
         .map_err(|_| {
             ErrorKind::UnexpectedChannelClose(format!(
                 "builder in |reader -> builder| channel has hung up"
@@ -358,15 +392,32 @@ where
             write!(w, "{}", blocks.delimiter()?)?;
         }
     }
-    writeln!(w, "")?;
+    writeln!(w)?;
 
     Ok(())
 }
 
 /// Helper function for early parse skipping, based on input ident
-pub fn check_index(regex: Option<&RegexOptions>, ident: usize) -> bool {
-    match regex {
-        Some(regex) if regex.is_ident() => regex.pattern().is_match(&ident.to_string()),
+pub fn check_index(regex: Option<&RegexOptions>, ident: Option<usize>) -> bool {
+    ident.map_or(true, |i| match regex {
+        Some(regex) if regex.is_ident() => regex.pattern().is_match(&i.to_string()),
         _ => true,
-    }
+    })
+}
+
+/// Helper function for abstracting the dependency check out of
+/// the individual business logic
+pub fn eval<T, C, F, A>(check: &C, f: F, arg: A) -> T
+where
+    F: Fn(bool, A) -> T,
+    C: AsRef<Field>,
+{
+    f(CLI.should_calculate(check.as_ref()), arg)
+}
+
+pub fn eval_raw<T, F, A>(f: F, arg: A) -> T
+where
+    F: Fn(&ProgramArgs, A) -> T,
+{
+    f(&CLI, arg)
 }
