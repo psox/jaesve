@@ -9,7 +9,8 @@ use {
         cli::{generate_cli, ProgramArgs},
         models::{
             assets::ReadKind,
-            error::{ErrorKind, ProgramExit},
+            error::Result,
+            error::{Context, ErrContext, ErrorKind, ProgramExit},
             initialize_logging, set_reader,
         },
         threads::spawn_workers,
@@ -36,7 +37,7 @@ fn main() {
     ProgramExit::from(try_main()).exit()
 }
 
-fn try_main() -> Result<(), ErrorKind> {
+fn try_main() -> Result<()> {
     // Channel for sending open input streams (stdin/file handles)
     // number controls how many shall be open at any given time,
     // counting from 0 (i.e: 0 -> 1, 1 -> 2, etc)
@@ -44,29 +45,22 @@ fn try_main() -> Result<(), ErrorKind> {
         syncQueue(CLI.input_file_handles_max());
 
     // Instantiates worker threads
-    let reader = spawn_workers(&CLI, rx)?;
+    let reader = spawn_workers(rx)?;
 
     // Hot loop
     for source in CLI.reader_list() {
         let read_from: ReadKind = set_reader(source);
-        tx.send(read_from).map_err(|_| {
-            ErrorKind::UnexpectedChannelClose(format!(
-                "reader in |main -> reader| channel has hung up"
-            ))
-        })?;
+        tx.send(read_from).context(Context::umcc("Reader"))?;
     }
 
     // Signals that that no new input sources will be sent
     drop(tx);
 
     // Waits for remaining threads to complete
-    reader.join().map_err(|_| {
-        ErrorKind::ThreadFailed(format!(
-            "{}",
-            std::thread::current().name().unwrap_or("unnamed")
-        ))
-        // join() returns a Result<Result<(), ErrorKind>, ErrorKind>, hence the double question mark
-    })??;
+    reader
+        .join()
+        .map_err(|_| ErrorKind::ThreadFailed)
+        .context(Context::tp("Reader"))??;
     // Return 0
     Ok(())
 }

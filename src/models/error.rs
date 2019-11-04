@@ -1,6 +1,138 @@
-use std::{error::Error, fmt::Debug, io::Error as ioError, process::exit, str::Utf8Error};
+use std::{
+    error, fmt::Debug, io::Error as ioError, process::exit as terminate, str::Utf8Error,
+    sync::mpsc::SendError,
+};
 
-pub(crate) type Result<T> = std::result::Result<T, ErrorKind>;
+#[cfg(feature = "config-file")]
+use toml::de::Error as TomlError;
+
+pub(crate) type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug)]
+pub struct Error {
+    kind: ErrorKind,
+    context: Option<Context>,
+}
+
+// 1 => Program failed to correctly execute
+// 2 => Thread panicked, potentially leaving OS resources in a dirty state
+// 3 => Program partially parsed data but was closed unexpectedly
+impl From<Error> for i32 {
+    fn from(err: Error) -> Self {
+        match err.kind {
+            ErrorKind::ThreadFailed => 2,
+            ErrorKind::ChannelError => 3,
+            _ => 1,
+        }
+    }
+}
+
+impl<E, C> From<(E, Option<C>)> for Error
+where
+    E: Into<ErrorKind>,
+    C: Into<Context>,
+{
+    fn from((err, context): (E, Option<C>)) -> Self {
+        Error {
+            kind: err.into(),
+            context: context.map(|c| c.into()),
+        }
+    }
+}
+
+impl<E> From<E> for Error
+where
+    E: Into<ErrorKind>,
+{
+    fn from(err: E) -> Self {
+        Error {
+            kind: err.into(),
+            context: None,
+        }
+    }
+}
+
+impl error::Error for Error {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        self.kind.source()
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self.context {
+            Some(ref con) => Error::display_with_context(&self.kind, con, f),
+            None => write!(f, "{}", self.kind),
+        }
+    }
+}
+
+impl Error {
+    fn display_with_context(
+        err: &ErrorKind,
+        con: &Context,
+        f: &mut std::fmt::Formatter,
+    ) -> std::fmt::Result {
+        type E = ErrorKind;
+        type C = Context;
+        match (err, con) {
+            (E::Io(e), C::DataLenEqualLineBufferLen(s)) => {
+                write!(f, "Input line size is >= input buffer. Input buffer size is adjustable, try adding 'config --buf_in <num>' where <num> > {} (error: {})", s, e)
+            }
+            (E::ChannelError, C::UnexpectedMetaChannelClose(n)) => {
+                write!(f, "A meta channel ({}) closed unexpectedly, normally due to a SIGINT", n)
+            }
+            (E::ChannelError, C::UnexpectedDataChannelClose) => {
+                write!(f, "Unable to send next data packet, receiver quit unexpectedly. This may occur due to a SIGINT, or an internal error")
+            }
+            (E::ThreadFailed, C::ThreadPanic(n)) => {
+                write!(f, "Thread {} has panicked, this is mostly likely caused by an internal logic error, but could also be caused by an external OS error", n)
+            }
+            (e, _) => write!(f, "{}", e)
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Context {
+    Override(String),
+    DataLenEqualLineBufferLen(usize),
+    UnexpectedMetaChannelClose(String),
+    UnexpectedDataChannelClose,
+    ThreadPanic(String),
+}
+
+impl Context {
+    /// UnexpectedMetaChannelClose
+    pub fn umcc<T: std::fmt::Display>(recv_name: T) -> Option<Self> {
+        Some(Self::UnexpectedMetaChannelClose(format!(
+            "{} -> {}",
+            std::thread::current().name().unwrap_or("unnamed"),
+            recv_name
+        )))
+    }
+
+    /// UnexpectedDataChannelClose
+    pub fn udcc() -> Option<Self> {
+        Some(Self::UnexpectedDataChannelClose)
+    }
+
+    /// ThreadPanic
+    pub fn tp<T: std::fmt::Display>(thread_name: T) -> Option<Self> {
+        Some(Self::ThreadPanic(format!("{}", thread_name)))
+    }
+
+    /// DataLenEqualLineBufferLen
+    pub fn dlelbl(data_len: usize) -> Option<Self> {
+        Some(Context::DataLenEqualLineBufferLen(data_len))
+    }
+}
+
+impl<T: AsRef<str>> From<T> for Context {
+    fn from(s: T) -> Self {
+        Context::Override(s.as_ref().to_string())
+    }
+}
 
 /// Contains any error emitted by this program
 #[derive(Debug)]
@@ -9,28 +141,15 @@ pub enum ErrorKind {
     Generic,
     Message(String),
     // Handles in-thread panics
-    ThreadFailed(String),
+    ThreadFailed,
     // Handles fatal channel closes
-    UnexpectedChannelClose(String),
+    ChannelError,
     // Wrapper for any IO / Json serde errors
     Io(ioError),
     // For byte to str casts
     UTF8(Utf8Error),
     // Handles missing fields during output streaming
     MissingField(String),
-}
-
-// 1 => Program failed to correctly execute
-// 2 => Thread panicked, potentially leaving OS resources in a dirty state
-// 3 => Program partially parsed data but was closed unexpectedly
-impl From<ErrorKind> for i32 {
-    fn from(err: ErrorKind) -> Self {
-        match err {
-            ErrorKind::ThreadFailed(_) => 2,
-            ErrorKind::UnexpectedChannelClose(_) => 3,
-            _ => 1,
-        }
-    }
 }
 
 // IO Error => ErrorKind
@@ -52,15 +171,28 @@ impl From<serde_json::Error> for ErrorKind {
     }
 }
 
+#[cfg(feature = "config-file")]
+impl From<TomlError> for ErrorKind {
+    fn from(err: TomlError) -> Self {
+        ErrorKind::Io(err.into())
+    }
+}
+
 impl From<Utf8Error> for ErrorKind {
     fn from(err: Utf8Error) -> Self {
         ErrorKind::UTF8(err)
     }
 }
 
+impl<T> From<SendError<T>> for ErrorKind {
+    fn from(_: SendError<T>) -> Self {
+        ErrorKind::ChannelError
+    }
+}
+
 // E => ErrorKind, where E implements Error
-impl From<Box<dyn Error>> for ErrorKind {
-    fn from(e: Box<dyn Error>) -> Self {
+impl From<Box<dyn error::Error>> for ErrorKind {
+    fn from(e: Box<dyn error::Error>) -> Self {
         ErrorKind::Message(format!("{}", e))
     }
 }
@@ -76,8 +208,8 @@ impl std::fmt::Display for ErrorKind {
         match self {
             ErrorKind::Generic => write!(f, "Generic Error"),
             ErrorKind::Message(m) => write!(f, "{}", m),
-            ErrorKind::ThreadFailed(e) => write!(f, "Thread: {} failed to return", e),
-            ErrorKind::UnexpectedChannelClose(e) => write!(f, "A channel quit unexpectedly: {}", e),
+            ErrorKind::ThreadFailed => write!(f, "A program thread has failed"),
+            ErrorKind::ChannelError => write!(f, "A channel quit unexpectedly"),
             ErrorKind::Io(e) => write!(f, "An underlying IO error occurred: {}", e),
             ErrorKind::UTF8(e) => write!(f, "Invalid or incomplete UTF-8: {}", e),
             ErrorKind::MissingField(e) => write!(f, "Missing required field: {}", e),
@@ -85,8 +217,8 @@ impl std::fmt::Display for ErrorKind {
     }
 }
 
-impl Error for ErrorKind {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
+impl error::Error for ErrorKind {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
             ErrorKind::Io(e) => Some(e),
             ErrorKind::UTF8(e) => Some(e),
@@ -96,11 +228,11 @@ impl Error for ErrorKind {
 }
 
 pub(crate) trait ErrContext<T, E> {
-    fn context<C>(self, context: C) -> std::result::Result<T, (E, C)>;
+    fn context<C>(self, context: Option<C>) -> std::result::Result<T, (E, Option<C>)>;
 }
 
 impl<T, E> ErrContext<T, E> for std::result::Result<T, E> {
-    fn context<C>(self, context: C) -> std::result::Result<T, (E, C)> {
+    fn context<C>(self, context: Option<C>) -> std::result::Result<T, (E, Option<C>)> {
         match self {
             Ok(res) => Ok(res),
             Err(err) => Err((err, context)),
@@ -111,7 +243,7 @@ impl<T, E> ErrContext<T, E> for std::result::Result<T, E> {
 /// Handles program return codes
 pub(crate) enum ProgramExit<T>
 where
-    T: Error,
+    T: error::Error,
 {
     Success,
     Failure(T),
@@ -119,20 +251,20 @@ where
 
 impl<T> ProgramExit<T>
 where
-    T: Into<i32> + Debug + Error,
+    T: Into<i32> + Debug + error::Error,
 {
     pub fn exit(self) -> ! {
         match self {
-            Self::Success => exit(0),
+            Self::Success => terminate(0),
             Self::Failure(err) => {
                 error!("Program exited with error: {}", err);
-                exit(err.into())
+                terminate(err.into())
             }
         }
     }
 }
 
-impl From<Result<()>> for ProgramExit<ErrorKind> {
+impl From<Result<()>> for ProgramExit<Error> {
     fn from(res: Result<()>) -> Self {
         match res {
             Ok(_) => ProgramExit::Success,

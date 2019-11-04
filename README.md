@@ -22,7 +22,6 @@ Jaesve comes with a CLI, courtesy of [clap.rs](https://github.com/clap-rs/clap).
 - `-h` `--help` Displays help (use `--help` for more detailed messages)
 - `-V` `--version` Displays version information
 - `-a` `--append` Append to output file, instead of overwriting
-- `-l` `--line` Set stdin to read a JSON doc from each line
 - `-q` `--quiet` Silences error messages
 - `-v` Verbosity of debug information
   - Max: 3
@@ -30,7 +29,9 @@ Jaesve comes with a CLI, courtesy of [clap.rs](https://github.com/clap-rs/clap).
 #### Options
 
 - `-o` `--output` Set output file to write
-  - Default: writes to stdout
+  - Default: `stdout`
+- `-l` `--line` Set stdin to read a JSON doc from each line, and the line to start processing from
+  - Default: `0`
 - `-E` `--regex` Set a regex to filter output
 - `-c` `--column` Sets field to match regex on
   - Possible: `ident, jptr, type, value, jmes`
@@ -59,6 +60,50 @@ Jaesve comes with a CLI, courtesy of [clap.rs](https://github.com/clap-rs/clap).
     - `jaesve --quiet --append -o output.csv input1 input2 - input4 // This is happy`
     - `jaesve input1 input2 - input4 --quiet --append -o output.csv // This is sad`
     - `jaesve input1 input2 - input4 : --quiet --append -o output.csv // This is happy`
+
+### Persistent Args
+
+A subset of the above flags and options can be set via environment variables or config file(s). Listed below:
+
+- `debug` (`-v`)
+- `quiet`
+- `append`
+- `line`
+- `delim`
+- `guard`
+- `format`
+- `buf_in`
+- `buf_out`
+- `linereader_eol`
+- `factor`
+
+They expect the same input kinds as the CLI variants, with flags (i.e `quiet`) taking common bool representations -- e.g `true`, `No`, `1`, etc.
+
+When given a variable from multiple sources the program will prioritize in this order: (highest to lowest)
+
+1. CLI
+2. Environment
+3. *$HOME*/jaesve.conf
+4. *$CONFIG*/jaesve.conf
+5. /etc/jaesve.conf _(if on *nix)_
+6. Default _(if any)_
+
+#### Environment
+
+The program will check for variables with the format `JAESVE_<VAR_NAME>`.
+
+#### File
+
+Config files are disabled by default, if you wish to use them add `--features=config-file` to your `cargo install/build`. The expect format is [TOML](https://github.com/toml-lang/toml) and an example file is listed below:
+
+```toml
+quiet = false
+delim = ","
+
+# Note this corresponds to the 'config' CLI subcommand
+[config]
+factor = "K"
+```
 
 ### Performance
 
