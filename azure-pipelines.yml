@@ -38,4 +38,4 @@ resources:
     - repository: templates
       type: github
       name: bazaah/azure-templates
-      endpoint: bazaah
+      endpoint: psox
