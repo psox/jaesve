@@ -14,14 +14,13 @@ steps:
 - task: Cargo@1
   inputs:
     cargoCommand: 'test'
-    cargoCommandOptions: '--release'
-    verbose: true
+    verbose: false
   displayName: Test the binary
 - task: Cargo@1
   inputs:
     cargoCommand: 'build'
     cargoCommandOptions: '--release'
-    verbose: true
+    verbose: false
   displayName: Build the binary
 - task: CmdLine@2
   inputs:
