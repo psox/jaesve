@@ -1,39 +1,43 @@
-trigger:
-- develop
-- master
-- feature/*
+stages:
+  - stage: compilation_check
+    displayName: Compilation check
+    jobs:
+      - template: rust/check.yml@templates
+        parameters: 
+          rust: stable
+          all_features: true
+  - stage: clippy_check
+    displayName: Clippy check
+    jobs:
+      - template: rust/clippy.yml@templates
+        parameters:
+          rust: stable
+          allow_fail: true
+  - stage: cargo_testing
+    displayName: Cargo test(s)
+    jobs:
+      - template: rust/test.yml@templates
+        parameters:
+          rust: stable
+          id: stable
+          cross: true
+          allow_fail: false
+          test_list:
+            - "--all"
+            - "--features=config-file"
+      - template: rust/test.yml@templates
+        parameters:
+          rust: nightly
+          id: nightly
+          cross: true
+          allow_fail: false
+          test_list:
+            - "--all"
+            - "--features=config-file"
 
-pool:
-  vmImage: 'ubuntu-latest'
-
-steps:
-- task: Rust@1
-  inputs:
-    installNightly: false
-  displayName: 'Install rust stable'
-- task: Cargo@1
-  inputs:
-    cargoCommand: 'test'
-    verbose: false
-  displayName: Test the binary
-- task: Cargo@1
-  inputs:
-    cargoCommand: 'build'
-    cargoCommandOptions: '--release'
-    verbose: false
-  displayName: Build the binary
-- task: CmdLine@2
-  inputs:
-    script: |
-      strip $(Build.Repository.LocalPath)/target/release/jaesve
-  displayName: Strip the binary
-- task: UniversalPackages@0
-  inputs:
-    command: 'publish'
-    publishDirectory: '$(Build.Repository.LocalPath)/target/release/jaesve'
-    feedsToUsePublish: 'internal'
-    vstsFeedPublish: 'f8625b77-e77e-48a4-9569-1570ad4bb9c8'
-    versionOption: 'custom'
-    versionPublish: '${vstsPackageVersion}-${Build.BuildId}'
-    vstsPackageVersion: 1.3.1
-  displayName: Deploy the binary
+resources:
+  repositories:
+    - repository: templates
+      type: github
+      name: bazaah/azure-templates
+      endpoint: bazaah
